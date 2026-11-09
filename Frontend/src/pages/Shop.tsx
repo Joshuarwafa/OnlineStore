@@ -12,6 +12,7 @@ import { formatMoney, productPath } from "../lib/format";
 import { useCart } from "../state/cart";
 import { flyToCart } from "../lib/flyToCart";
 import { Icon } from "../components/Icon";
+import { TapHand } from "../components/TapHand";
 import { availableFor, myBranchOf, useLocations } from "../lib/locations";
 import { openBranchPicker, useBranchState } from "../lib/branch";
 
@@ -77,9 +78,7 @@ export function Shop() {
         {locations.length > 1 && (
           // A pointing hand always shows shoppers where to choose or change their branch
           <span className={`minechip-wrap ${mine ? "is-set" : ""}`}>
-            <span className="minechip__hand" aria-hidden="true">
-              👉
-            </span>
+            <TapHand direction="right" className="minechip__hand" />
             <button className={`minechip ${mine ? "is-on" : "is-empty"}`} onClick={openBranchPicker}>
               <Icon name="pin" />
               {mine ? (

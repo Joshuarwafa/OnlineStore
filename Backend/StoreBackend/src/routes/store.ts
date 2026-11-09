@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { liveProduct, queryCatalogue, shopCategories, shopLocations } from "../catalogue.js";
 import { shopCompany } from "../shopCompany.js";
+import { firstStep, shopWorkflow } from "../shopWorkflow.js";
 import { cleanLines, findOrder, placeOrder, priceDocket, QuoteChanged } from "../orders.js";
 
 // Public shop routes: catalogue, product, checkout quote, and quotations into Sage.
@@ -41,6 +42,12 @@ store.get("/company", async (_req, res) => {
   res.json(await shopCompany());
 });
 
+// What checkout makes (Maintenance → Workflow) and whether shoppers may ask for a quotation instead
+store.get("/checkout/settings", async (_req, res) => {
+  const workflow = await shopWorkflow();
+  res.json({ checkoutDocument: firstStep(workflow).document, allowQuotation: workflow.allowQuotation });
+});
+
 // Codes can contain "/" (47195/ORB): the client sends them encoded as one segment
 store.get("/products/:code", async (req, res) => {
   res.json(await liveProduct(req.params.code));
@@ -52,11 +59,11 @@ store.post("/checkout/quote", async (req, res) => {
   res.json(quote);
 });
 
-// The cart becomes a quotation in Sage Evolution, on the cash account chosen in the admin portal
+// The cart becomes a quotation or sales order in Sage (Maintenance → Workflow), on the shop's cash account
 store.post("/orders", async (req, res) => {
   try {
     const { order, duplicate } = await placeOrder(req.body, req.get("Idempotency-Key") ?? "");
-    res.status(duplicate ? 200 : 201).json({ storeOrderNo: order.storeOrderNo, status: order.status, sageDocumentNo: order.sageDocumentNo, duplicate });
+    res.status(duplicate ? 200 : 201).json({ documentType: order.documentType, storeOrderNo: order.storeOrderNo, status: order.status, sageDocumentNo: order.sageDocumentNo, duplicate });
   } catch (e) {
     // Stock or prices moved: send the fresh quote so the shop can show what changed
     if (e instanceof QuoteChanged) {

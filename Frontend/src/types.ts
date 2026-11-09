@@ -143,13 +143,20 @@ export interface PlaceOrderRequest {
   payment: PaymentMethod;
   /** Sage warehouse code of the shopper's branch. Stock is checked and taken there. */
   branch?: string | null;
+  /** Ask for a quotation instead of ordering (only when the shop allows it). */
+  quotation?: boolean;
   lines: { code: string; qty: number }[];
 }
+
+/** The documents an order goes through in Sage (admin → Maintenance → Workflow). */
+export type DocumentType = "Quotation" | "SalesOrder" | "Invoice";
 
 /** Mirrors SageStaging statuses. */
 export type OrderStatusCode = "Pending" | "Processing" | "Posted" | "Failed" | "Cancelled";
 
 export interface OrderStatus {
+  /** Quotation or sales order. Older answers have none: a quotation. */
+  documentType?: DocumentType;
   storeOrderNo: string;
   status: OrderStatusCode;
   placedAt: string;
@@ -183,9 +190,10 @@ export interface Company {
 }
 
 export interface PlaceOrderResponse {
+  documentType?: DocumentType;
   storeOrderNo: string;
   status: OrderStatusCode;
-  /** Sage quotation number. */
+  /** Sage quotation or sales order number. */
   sageDocumentNo?: string | null;
   /** True when this Idempotency-Key had already been used: the existing order came back. */
   duplicate: boolean;

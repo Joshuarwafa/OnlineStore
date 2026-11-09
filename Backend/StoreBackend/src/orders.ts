@@ -1,21 +1,27 @@
-// Checkout: the cart becomes a quotation in Sage Evolution.
+// Online orders and the documents they become in Sage Evolution.
 //
-// Walk-in shoppers don't have a Sage account, so every quotation goes on the cash account chosen in
-// the admin portal (Maintenance → Customers). The shopper's name, phone, email and delivery address
-// are written on the quotation itself (Deliver To and the message lines), and each line is taken
-// from the shopper's branch (its Sage warehouse).
+// The admin sets the shop's workflow (Maintenance → Workflow): an order becomes a sales order
+// (which can hold the stock) or an invoice straight away. Quotations are optional: when allowed, the
+// shopper can ask for one instead of ordering, and staff convert it to a sales order in Sage
+// Evolution. Every document is a row in the store database (dbo.StoreDocument +
+// StoreDocumentLine, through SageAPI), keyed by the order's store number (WEB-…).
 //
-// A copy of each quotation is kept in data/orders/<number>.json, so the shopper can open it again
-// with their number and phone, and so pressing the button twice never makes two quotations.
+// Walk-in shoppers don't have a Sage account, so every document goes on the cash account chosen in
+// Maintenance → Customers. The shopper's name, phone, email and delivery address are written on the
+// document itself (Deliver To and the message lines), and each line is taken from the shopper's
+// branch (its Sage warehouse).
+//
+// Each step is saved first as Pending, then made in Sage, then marked Posted with Sage's number or
+// Failed with Sage's reason. So nothing reaches Sage without a record, the shopper can open their
+// order again with its number and phone, and pressing a button twice never makes two documents.
 
 import { randomBytes } from "node:crypto";
-import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
 import { liveProduct, shopLocations } from "./catalogue.js";
 import { config } from "./config.js";
 import { HttpError } from "./errors.js";
-import { sageApi } from "./sageApi.js";
+import { SageApiError, sageApi } from "./sageApi.js";
 import { shopCustomers } from "./shopCustomers.js";
+import { type DocumentType, DOCUMENT_ORDER, firstStep, shopWorkflow } from "./shopWorkflow.js";
 
 // ---------- pricing a cart ----------
 
@@ -116,20 +122,33 @@ export async function priceDocket(lines: DocketLine[], branchCode?: unknown) {
   };
 }
 
-// ---------- quotations ----------
+// ---------- documents ----------
 
 type Fulfilment = "delivery" | "collection";
 type Payment = "on_collection" | "on_delivery" | "online";
+type DocStatus = "Pending" | "Posted" | "Failed" | "Cancelled";
+export type { DocumentType };
 
+/**
+ * One step of an online order: its quotation, sales order or invoice. All the steps of one order
+ * share its store number (WEB-…), and each later step points to the one it was made from.
+ */
 export interface StoredOrder {
+  documentType: DocumentType;
+  /** The record's id in dbo.StoreDocument (absent until saved). */
+  documentId?: number;
+  sourceDocumentId?: number | null;
   storeOrderNo: string;
-  idempotencyKey: string;
-  /** Sage quotation number, e.g. QUO0012 */
+  /** Checkout's key; only the first step has one. */
+  idempotencyKey: string | null;
+  /** Sage's number, e.g. SOQ0012, SO0034 or INV0101. Empty while Pending. */
   sageDocumentNo: string;
   sageCustomer: string;
-  /** The account's name in Sage, for the "To:" block of the printed quotation. */
+  /** The account's name in Sage, for the "To:" block of the printed document. */
   sageCustomerName?: string | null;
-  status: "Posted";
+  /** Pending = saved, Sage not confirmed yet; Posted = in Sage; Failed = Sage refused it. */
+  status: DocStatus;
+  failReason?: string | null;
   placedAt: string;
   shopper: { name: string; phone: string; email: string };
   fulfilment: Fulfilment;
@@ -139,43 +158,146 @@ export interface StoredOrder {
   lines: { code: string; description: string; qty: number; unitPriceIncl: number; unitPriceExcl?: number; warehouse: string | null }[];
   totalIncl: number;
   totalExcl?: number;
-  /** The three message lines written on the quotation in Sage. */
+  /** The three message lines written on the document in Sage. */
   messages?: string[];
   currency: string;
 }
 
-const DIR = join(dirname(config.imagesDir), "orders");
-let byKey: Map<string, string> | null = null; // idempotency key → order number
-const inFlight = new Map<string, Promise<StoredOrder>>();
+const LABEL: Record<DocumentType, string> = { Quotation: "quotation", SalesOrder: "order", Invoice: "invoice" };
+const PAYMENTS: Payment[] = ["on_collection", "on_delivery", "online"];
+const STATUSES: DocStatus[] = ["Pending", "Posted", "Failed", "Cancelled"];
+const rank = (t: DocumentType) => DOCUMENT_ORDER.indexOf(t);
 
-async function keys(): Promise<Map<string, string>> {
-  if (byKey) return byKey;
-  const map = new Map<string, string>();
-  try {
-    for (const f of await readdir(DIR)) {
-      if (!f.endsWith(".json")) continue;
-      try {
-        const o = JSON.parse(await readFile(join(DIR, f), "utf8")) as StoredOrder;
-        if (o.idempotencyKey) map.set(o.idempotencyKey, o.storeOrderNo);
-      } catch {
-        /* skip a damaged file */
-      }
-    }
-  } catch {
-    /* no orders yet */
-  }
-  byKey = map;
-  return map;
+// ---------- the record in the store database (dbo.StoreDocument + StoreDocumentLine, via SageAPI) ----------
+
+interface StoreDocument {
+  documentId: number;
+  documentType: string;
+  documentNo: string;
+  sageDocumentNo: string | null;
+  status: string;
+  sourceDocumentId: number | null;
+  idempotencyKey: string | null;
+  documentDate: string;
+  sageAccount: string | null;
+  sageAccountName: string | null;
+  customerName: string | null;
+  customerPhone: string | null;
+  customerEmail: string | null;
+  fulfilment: string | null;
+  deliveryAddress: string | null;
+  payment: string | null;
+  branchCode: string | null;
+  branchName: string | null;
+  messages: string[];
+  currency: string;
+  totalExcl: number;
+  totalIncl: number;
+  failReason: string | null;
+  postedAt: string | null;
+  createdAt: string;
+  lines: { itemCode: string; description: string | null; warehouse: string | null; quantity: number; unitPriceExcl: number; unitPriceIncl: number }[];
 }
+
+const docType = (t: string): DocumentType => DOCUMENT_ORDER.find((d) => d === t) ?? "Quotation";
+
+function toRecord(o: StoredOrder) {
+  return {
+    documentType: o.documentType,
+    documentNo: o.storeOrderNo,
+    sageDocumentNo: o.sageDocumentNo || null,
+    status: o.status,
+    sourceDocumentId: o.sourceDocumentId ?? null,
+    idempotencyKey: o.idempotencyKey,
+    documentDate: o.placedAt,
+    sageAccount: o.sageCustomer,
+    sageAccountName: o.sageCustomerName ?? null,
+    customerName: o.shopper.name,
+    customerPhone: o.shopper.phone,
+    customerEmail: o.shopper.email || null,
+    fulfilment: o.fulfilment,
+    deliveryAddress: o.address,
+    payment: o.payment,
+    branchCode: o.branch?.code ?? null,
+    branchName: o.branch?.name ?? null,
+    messages: o.messages ?? [],
+    currency: o.currency,
+    lines: o.lines.map((l) => ({
+      itemCode: l.code,
+      description: l.description,
+      warehouse: l.warehouse,
+      quantity: l.qty,
+      unitPriceExcl: l.unitPriceExcl ?? l.unitPriceIncl,
+      unitPriceIncl: l.unitPriceIncl,
+    })),
+  };
+}
+
+function fromRecord(d: StoreDocument): StoredOrder {
+  return {
+    documentType: docType(d.documentType),
+    documentId: d.documentId,
+    sourceDocumentId: d.sourceDocumentId,
+    storeOrderNo: d.documentNo,
+    idempotencyKey: d.idempotencyKey,
+    sageDocumentNo: d.sageDocumentNo ?? "",
+    sageCustomer: d.sageAccount ?? "",
+    sageCustomerName: d.sageAccountName,
+    status: STATUSES.find((s) => s === d.status) ?? "Pending",
+    failReason: d.failReason,
+    placedAt: d.documentDate,
+    shopper: { name: d.customerName ?? "", phone: d.customerPhone ?? "", email: d.customerEmail ?? "" },
+    fulfilment: d.fulfilment === "delivery" ? "delivery" : "collection",
+    address: d.deliveryAddress,
+    payment: PAYMENTS.find((p) => p === d.payment) ?? "on_collection",
+    branch: d.branchCode ? { code: d.branchCode, name: d.branchName ?? d.branchCode } : null,
+    lines: (d.lines ?? []).map((l) => ({
+      code: l.itemCode,
+      description: l.description ?? l.itemCode,
+      qty: l.quantity,
+      unitPriceIncl: l.unitPriceIncl,
+      unitPriceExcl: l.unitPriceExcl,
+      warehouse: l.warehouse,
+    })),
+    totalIncl: d.totalIncl,
+    totalExcl: d.totalExcl,
+    messages: d.messages,
+    currency: d.currency,
+  };
+}
+
+const enc = encodeURIComponent;
+
+const setStatus = (o: StoredOrder, status: "Pending" | "Posted" | "Failed", sageDocumentNo?: string, failReason?: string) =>
+  sageApi<StoreDocument>("PUT", `/store/documents/${o.documentType}/${enc(o.storeOrderNo)}/status`, { status, sageDocumentNo, failReason });
+
+/** One step of an order, with its lines. */
+async function readStage(type: DocumentType, no: string): Promise<StoredOrder | null> {
+  try {
+    return fromRecord(await sageApi<StoreDocument>("GET", `/store/documents/${type}/${enc(no)}`));
+  } catch (e) {
+    if (e instanceof HttpError && e.status === 404) return null;
+    throw e;
+  }
+}
+
+/** The headers of every step of one order, first step first. */
+async function stagesOf(no: string): Promise<StoreDocument[]> {
+  const rows = await sageApi<StoreDocument[]>("GET", `/store/documents?search=${enc(no)}&take=20`);
+  return (rows ?? []).filter((d) => d.documentNo === no).sort((a, b) => rank(docType(a.documentType)) - rank(docType(b.documentType)));
+}
+
+/** The step to show: the furthest one that didn't fail (or the furthest, if they all did). */
+const furthest = (stages: StoreDocument[]) => [...stages].reverse().find((d) => d.status !== "Failed") ?? stages[stages.length - 1];
 
 async function readOrder(no: string): Promise<StoredOrder | null> {
   if (!/^[A-Z0-9-]{4,30}$/.test(no)) return null;
-  try {
-    return JSON.parse(await readFile(join(DIR, `${no}.json`), "utf8")) as StoredOrder;
-  } catch {
-    return null;
-  }
+  const stages = await stagesOf(no);
+  if (stages.length === 0) return null;
+  return readStage(docType(furthest(stages).documentType), no);
 }
+
+// ---------- Sage ----------
 
 /** e.g. WEB-261106-K7QX: date it was placed and four letters, easy to read out on the phone. */
 function newOrderNo(now: Date): string {
@@ -196,6 +318,146 @@ const PAYMENT_TEXT: Record<Payment, string> = {
   online: "Paid online",
 };
 
+/** A new quotation or sales order as SageAPI wants it. Deliver To holds the shopper (the account is the shared cash account). */
+function sageRequest(o: StoredOrder) {
+  const addr = o.fulfilment === "delivery" ? o.address ?? "" : `Collect${o.branch ? ` at ${o.branch.name}` : ""}`;
+  const messages = o.messages ?? [];
+  return {
+    customer: o.sageCustomer,
+    externalOrderNo: o.storeOrderNo,
+    description: fit(`Online shop ${LABEL[o.documentType]} ${o.storeOrderNo}`, 100),
+    pricesIncludeTax: true,
+    deliverTo: {
+      line1: fit(o.shopper.name, 40),
+      line2: fit(`Tel ${o.shopper.phone}`, 40),
+      line3: fit(o.shopper.email, 40),
+      line4: fit(addr, 40),
+      line5: fit(addr.slice(40), 40),
+      postalCode: "",
+    },
+    messageLine1: messages[0] ?? "",
+    messageLine2: messages[1] ?? "",
+    messageLine3: messages[2] ?? "",
+    lines: o.lines.map((l) => ({ itemCode: l.code, quantity: l.qty, price: l.unitPriceIncl, warehouse: l.warehouse ?? "" })),
+  };
+}
+
+/** Makes the document in Sage, through SageAPI's quotation, sales order and invoice endpoints. */
+async function sendToSage(o: StoredOrder): Promise<string> {
+  switch (o.documentType) {
+    case "Quotation":
+      return (await sageApi<{ quotationNo: string }>("POST", "/salesorder/quotation", sageRequest(o)))?.quotationNo?.trim() ?? "";
+    case "SalesOrder": {
+      const { reserveStock } = firstStep(await shopWorkflow());
+      return (await sageApi<{ orderNo: string }>("POST", "/salesorder", { ...sageRequest(o), reserveStock: reserveStock !== false }))?.orderNo?.trim() ?? "";
+    }
+    case "Invoice": {
+      const { lines, ...header } = sageRequest(o);
+      const invoice = { ...header, lines: lines.map((l) => ({ itemCode: l.itemCode, quantity: l.quantity, price: l.price, warehouse: l.warehouse })) };
+      return (await sageApi<{ invoiceNo: string }>("POST", "/salesorder/invoice", invoice))?.invoiceNo?.trim() ?? "";
+    }
+  }
+}
+
+/** Sage's number for this step, found by the store number (External Order No), or null. */
+async function findInSage(o: StoredOrder): Promise<string | null> {
+  try {
+    const r = await sageApi<{ documentNo: string }>("GET", `/salesorder/by-external/${enc(o.storeOrderNo)}?type=${o.documentType}`);
+    return r?.documentNo?.trim() || null;
+  } catch (e) {
+    if (e instanceof HttpError && e.status === 404) return null;
+    throw e;
+  }
+}
+
+const errText = (e: unknown) => (e instanceof SageApiError ? [e.message, e.detail].filter(Boolean).join(": ") : e instanceof Error ? e.message : String(e));
+
+/**
+ * Makes a Pending step in Sage and marks the record Posted, or Failed with Sage's reason.
+ * With no answer from SageAPI it stays Pending: we can't know whether Sage made it, so the next
+ * try (or the check every minute) looks in Sage before doing anything again.
+ */
+async function post(o: StoredOrder): Promise<StoredOrder> {
+  let sageNo: string;
+  try {
+    sageNo = await sendToSage(o);
+    if (!sageNo) throw new SageApiError(502, "Sage didn't return a document number.", true);
+  } catch (e) {
+    if (e instanceof SageApiError && !e.answered) {
+      console.error(`${o.documentType} ${o.storeOrderNo}: no answer from SageAPI (${e.message}). Left Pending; checked in Sage before any retry.`);
+      throw new HttpError(502, `We couldn't confirm your ${LABEL[o.documentType]} yet. Please wait a minute and try again. You won't get two.`);
+    }
+    const reason = errText(e);
+    console.error(`${o.documentType} ${o.storeOrderNo} refused by Sage: ${reason}`);
+    await setStatus(o, "Failed", undefined, reason).catch((err) => console.error(`Couldn't mark ${o.storeOrderNo} Failed: ${errText(err)}`));
+    throw new StepFailed(o.documentType, reason);
+  }
+
+  const posted: StoredOrder = { ...o, sageDocumentNo: sageNo, status: "Posted", failReason: null };
+  await setStatus(o, "Posted", sageNo).catch((err) =>
+    // Sage has it; the record catches up on the next check, which finds it by its store number
+    console.error(`${o.storeOrderNo} is ${sageNo} in Sage but still Pending in the store database: ${errText(err)}`),
+  );
+  console.log(`${o.documentType} ${sageNo} created in Sage on ${o.sageCustomer} for online order ${o.storeOrderNo} (${o.lines.length} lines, ${o.totalIncl} ${o.currency})`);
+  return posted;
+}
+
+/** Sage refused a step. The shopper sees a polite message; staff see `reason` in Documents. */
+export class StepFailed extends HttpError {
+  constructor(
+    public readonly document: DocumentType,
+    public readonly reason: string,
+  ) {
+    super(502, `We couldn't create your ${LABEL[document]} right now. Please call us and we'll help.`);
+  }
+}
+
+/** A Pending step: if Sage has it after all, mark it Posted; otherwise (when asked) send it again. */
+async function settle(o: StoredOrder, resend: boolean): Promise<StoredOrder> {
+  if (o.status !== "Pending") return o;
+  // Queued in SageAPI behind any Sage request still running, so a slow first attempt is seen here
+  const found = await findInSage(o);
+  if (found) {
+    await setStatus(o, "Posted", found);
+    console.log(`${o.documentType} ${o.storeOrderNo} was made in Sage as ${found}; record marked Posted.`);
+    return { ...o, sageDocumentNo: found, status: "Posted" };
+  }
+  return resend ? post(o) : o;
+}
+
+// Every minute: Pending steps older than a minute are checked in Sage. Found → Posted. Still not
+// there after 10 minutes → Failed, so checkout's key is freed (the shopper can try again) and staff
+// can see it in Documents.
+const inFlight = new Map<string, Promise<StoredOrder>>();
+const stepping = new Map<string, Promise<unknown>>(); // store number → a staff step running now
+let checking = false;
+async function checkPending() {
+  if (checking) return;
+  checking = true;
+  try {
+    const pending = await sageApi<StoreDocument[]>("GET", "/store/documents?status=Pending&take=50");
+    for (const d of pending ?? []) {
+      if ((d.idempotencyKey && inFlight.has(d.idempotencyKey)) || stepping.has(d.documentNo)) continue; // being made right now
+      const age = Date.now() - new Date(d.createdAt).getTime();
+      if (age < 60_000) continue;
+      const o = fromRecord(d);
+      const settled = await settle(o, false);
+      if (settled.status === "Pending" && age > 10 * 60_000) {
+        await setStatus(o, "Failed", undefined, "Never reached Sage (no answer from SageAPI).");
+        console.error(`${o.documentType} ${o.storeOrderNo} never reached Sage; marked Failed.`);
+      }
+    }
+  } catch (e) {
+    console.error(`Checking Pending documents failed: ${errText(e)}`);
+  } finally {
+    checking = false;
+  }
+}
+setTimeout(() => void checkPending(), 10_000).unref();
+setInterval(() => void checkPending(), 60_000).unref();
+
+// ---------- checkout ----------
+
 function readRequest(body: any) {
   const name = typeof body?.shopper?.name === "string" ? body.shopper.name.trim() : "";
   const phone = typeof body?.shopper?.phone === "string" ? body.shopper.phone.trim() : "";
@@ -212,30 +474,46 @@ function readRequest(body: any) {
       : null;
   if (fulfilment === "delivery" && (!address || address.length < 5)) throw new HttpError(400, "Where should we deliver to?");
 
-  const payment: Payment = ["on_collection", "on_delivery", "online"].includes(body?.payment) ? body.payment : "on_collection";
-  return { shopper: { name, phone, email }, fulfilment, address, payment, lines: cleanLines(body?.lines), branch: body?.branch };
+  const payment: Payment = PAYMENTS.includes(body?.payment) ? body.payment : "on_collection";
+  // The shopper asked for a quotation instead of ordering (only when the workflow allows it)
+  const quotation = body?.quotation === true;
+  return { shopper: { name, phone, email }, fulfilment, address, payment, quotation, lines: cleanLines(body?.lines), branch: body?.branch };
 }
 
 /**
- * Turns the cart into a Sage quotation. Same idempotency key → the same quotation comes back.
- * Throws 409 with the fresh quote when prices or stock changed, so the shopper can check them first.
+ * Turns the cart into the workflow's document (Maintenance → Workflow): a sales order or an invoice,
+ * or a quotation when the shopper asked for one and the workflow allows it. Same idempotency key →
+ * the same order comes back. Throws 409 with the fresh quote when prices or stock changed.
  */
 export async function placeOrder(body: unknown, idempotencyKey: string): Promise<{ order: StoredOrder; duplicate: boolean }> {
   const key = idempotencyKey.trim();
   if (key.length < 8 || key.length > 100) throw new HttpError(400, "Missing Idempotency-Key header.");
 
-  const existing = (await keys()).get(key);
-  if (existing) {
-    const o = await readOrder(existing);
-    if (o) return { order: o, duplicate: true };
-  }
   const running = inFlight.get(key);
   if (running) return { order: await running, duplicate: true };
 
-  const work = createQuotation(readRequest(body), key);
-  inFlight.set(key, work);
+  const work = (async () => {
+    // Already saved with this key? Never guess: if the database can't be asked, stop here
+    let hits: StoreDocument[];
+    try {
+      hits = await sageApi<StoreDocument[]>("GET", `/store/documents?key=${enc(key)}&take=1`);
+    } catch (e) {
+      console.error(`Checkout refused: the store database can't be reached (${errText(e)}).`);
+      throw new HttpError(503, "We can't take orders online right now. Please try again in a minute.");
+    }
+    const hit = hits?.[0];
+    const existing = hit ? await readStage(docType(hit.documentType), hit.documentNo) : null;
+    if (existing) return { order: await settle(existing, true), duplicate: true };
+    return { order: await createDocument(readRequest(body), key), duplicate: false };
+  })();
+
+  // A second press waits on this copy. Its failure is answered by `await work` below, so the copy
+  // must not count as unhandled (Node stops the whole server on an unhandled rejection).
+  const shared = work.then((r) => r.order);
+  shared.catch(() => {});
+  inFlight.set(key, shared);
   try {
-    return { order: await work, duplicate: false };
+    return await work;
   } finally {
     inFlight.delete(key);
   }
@@ -248,12 +526,14 @@ export class QuoteChanged extends HttpError {
   }
 }
 
-async function createQuotation(req: ReturnType<typeof readRequest>, key: string): Promise<StoredOrder> {
-  const { cashAccount, cashAccountName } = await shopCustomers();
+async function createDocument(req: ReturnType<typeof readRequest>, key: string): Promise<StoredOrder> {
+  const [{ cashAccount, cashAccountName }, workflow] = await Promise.all([shopCustomers(), shopWorkflow()]);
   if (!cashAccount) {
-    console.error("Quotation refused: no cash account. Choose one in the admin portal under Maintenance → Customers.");
-    throw new HttpError(503, "We can't take quotations online right now. Please call us and we'll help.");
+    console.error("Checkout refused: no cash account. Choose one in the admin portal under Maintenance → Customers.");
+    throw new HttpError(503, "We can't take orders online right now. Please call us and we'll help.");
   }
+
+  if (req.quotation && !workflow.allowQuotation) throw new HttpError(400, "Quotations aren't offered online. Please place your order.");
 
   const { branch, priced, quote } = await priceDocket(req.lines, req.branch);
   if (!quote.clean) throw new QuoteChanged(quote);
@@ -262,41 +542,14 @@ async function createQuotation(req: ReturnType<typeof readRequest>, key: string)
   const storeOrderNo = newOrderNo(now);
   const where = req.fulfilment === "delivery" ? `Deliver: ${req.address}` : `Collect${branch ? ` at ${branch.name}` : ""}`;
 
-  // Deliver To holds the shopper, because the account itself is the shared cash account
-  const addr = req.fulfilment === "delivery" ? req.address ?? "" : `Collect${branch ? ` at ${branch.name}` : ""}`;
-  const messages = [
-    fit(`Online shop ${storeOrderNo} · ${req.shopper.name} · ${req.shopper.phone}`, 100),
-    fit(`${where} · ${PAYMENT_TEXT[req.payment]}`, 100),
-    fit(req.shopper.email ? `Email ${req.shopper.email}` : "", 100),
-  ];
-  const result = await sageApi<{ quotationNo: string }>("POST", "/salesorder/quotation", {
-    customer: cashAccount,
-    externalOrderNo: storeOrderNo,
-    description: fit(`Online shop quotation ${storeOrderNo}`, 100),
-    pricesIncludeTax: true,
-    deliverTo: {
-      line1: fit(req.shopper.name, 40),
-      line2: fit(`Tel ${req.shopper.phone}`, 40),
-      line3: fit(req.shopper.email, 40),
-      line4: fit(addr, 40),
-      line5: fit(addr.slice(40), 40),
-      postalCode: "",
-    },
-    messageLine1: messages[0],
-    messageLine2: messages[1],
-    messageLine3: messages[2],
-    lines: priced.map((l) => ({ itemCode: l.code, quantity: l.qty, price: l.unitPriceIncl, warehouse: l.warehouse ?? "" })),
-  });
-  const quotationNo = result?.quotationNo?.trim();
-  if (!quotationNo) throw new HttpError(502, "Sage didn't return a quotation number.");
-
   const order: StoredOrder = {
+    documentType: req.quotation ? "Quotation" : firstStep(workflow).document,
     storeOrderNo,
     idempotencyKey: key,
-    sageDocumentNo: quotationNo,
+    sageDocumentNo: "",
     sageCustomer: cashAccount,
     sageCustomerName: cashAccountName,
-    status: "Posted",
+    status: "Pending",
     placedAt: now.toISOString(),
     shopper: req.shopper,
     fulfilment: req.fulfilment,
@@ -313,32 +566,44 @@ async function createQuotation(req: ReturnType<typeof readRequest>, key: string)
     })),
     totalIncl: quote.totalIncl,
     totalExcl: quote.totalExcl,
-    messages,
+    messages: [
+      fit(`Online shop ${storeOrderNo} · ${req.shopper.name} · ${req.shopper.phone}`, 100),
+      fit(`${where} · ${PAYMENT_TEXT[req.payment]}`, 100),
+      fit(req.shopper.email ? `Email ${req.shopper.email}` : "", 100),
+    ],
     currency: config.currency,
   };
 
-  await mkdir(DIR, { recursive: true });
-  const file = join(DIR, `${storeOrderNo}.json`);
-  await writeFile(`${file}.tmp`, JSON.stringify(order, null, 2));
-  await rename(`${file}.tmp`, file); // never a half-written file
-  (await keys()).set(key, storeOrderNo);
-  console.log(`Quotation ${quotationNo} created in Sage on ${cashAccount} for online order ${storeOrderNo} (${order.lines.length} lines, ${order.totalIncl} ${order.currency})`);
-  return order;
+  // 1. Saved first, so nothing reaches Sage without a record of it
+  let saved: StoredOrder;
+  try {
+    saved = fromRecord(await sageApi<StoreDocument>("POST", "/store/documents", toRecord(order)));
+  } catch (e) {
+    console.error(`Checkout refused: couldn't save ${storeOrderNo} in the store database (${errText(e)}).`);
+    throw new HttpError(503, "We can't take orders online right now. Please try again in a minute.");
+  }
+  // Another request with the same key saved first: that one is the order
+  if (saved.storeOrderNo !== storeOrderNo) return settle(saved, true);
+
+  // 2. Then made in Sage and marked Posted (or Failed)
+  return post({ ...order, documentId: saved.documentId });
 }
 
-/** What the shopper sees. Found only with the number and the phone (or email) given at checkout. */
+/** What the shopper sees: the furthest step. Found only with the number and the phone (or email) given at checkout. */
 export async function findOrder(no: string, contact: string) {
-  const o = await readOrder(no.trim().toUpperCase());
+  let o = await readOrder(no.trim().toUpperCase());
   const c = contact.trim().toLowerCase();
   const matches =
     o && c && ((digits(c).length >= 7 && digits(c).slice(-9) === digits(o.shopper.phone).slice(-9)) || (o.shopper.email && c === o.shopper.email.toLowerCase()));
-  if (!o || !matches) throw new HttpError(404, "We couldn't find a quotation with that number and phone number.");
+  if (!o || !matches) throw new HttpError(404, "We couldn't find a quotation or order with that number and phone number.");
+  if (o.status === "Pending") o = await settle(o, false).catch(() => o!);
   return {
+    documentType: o.documentType,
     storeOrderNo: o.storeOrderNo,
     status: o.status,
     placedAt: o.placedAt,
     updatedAt: o.placedAt,
-    sageDocumentNo: o.sageDocumentNo,
+    sageDocumentNo: o.sageDocumentNo || null,
     shopperName: o.shopper.name,
     fulfilment: o.fulfilment,
     payment: o.payment,
@@ -354,9 +619,123 @@ export async function findOrder(no: string, contact: string) {
     totalIncl: o.totalIncl,
     totalExcl: o.totalExcl ?? round2(o.lines.reduce((s, l) => s + (l.unitPriceExcl ?? l.unitPriceIncl) * l.qty, 0)),
     currency: o.currency,
-    // For the printed quotation: the Sage account it is on, and the message lines on it
+    // For the printed document: the Sage account it is on, and the message lines on it
     account: o.sageCustomer,
     accountName: o.sageCustomerName ?? null,
     messages: o.messages ?? [],
   };
+}
+
+// ---------- admin → Documents ----------
+
+export interface AdminOrderStage {
+  documentType: DocumentType;
+  sageDocumentNo: string | null;
+  status: DocStatus;
+  failReason: string | null;
+  date: string;
+}
+
+/** What staff can do with an order: try a document Sage refused again, or check one Sage hasn't confirmed. */
+export type NextAction = { kind: "retry"; document: DocumentType } | { kind: "check"; document: DocumentType } | null;
+
+export interface AdminOrder {
+  storeOrderNo: string;
+  placedAt: string;
+  customerName: string;
+  customerPhone: string;
+  branchName: string | null;
+  fulfilment: string;
+  payment: string;
+  totalIncl: number;
+  currency: string;
+  stages: AdminOrderStage[];
+  next: NextAction;
+}
+
+function nextAction(stages: StoreDocument[]): NextAction {
+  const last = stages[stages.length - 1];
+  const type = docType(last.documentType);
+  if (last.status === "Failed") return { kind: "retry", document: type };
+  if (last.status === "Pending") return { kind: "check", document: type };
+  return null;
+}
+
+/** Online orders, newest first, each with its documents and anything staff need to do. */
+export async function listOrders(q: { search?: string; status?: string; take?: number }): Promise<AdminOrder[]> {
+  const params = new URLSearchParams({ take: String(Math.min(Math.max(q.take ?? 300, 1), 500)) });
+  if (q.search?.trim()) params.set("search", q.search.trim().slice(0, 100));
+  const rows = (await sageApi<StoreDocument[]>("GET", `/store/documents?${params}`)) ?? [];
+
+  const byNo = new Map<string, StoreDocument[]>();
+  for (const d of rows) byNo.set(d.documentNo, [...(byNo.get(d.documentNo) ?? []), d]);
+
+  const orders = [...byNo.values()].map((all): AdminOrder => {
+    const stages = all.sort((a, b) => rank(docType(a.documentType)) - rank(docType(b.documentType)));
+    const head = stages[0];
+    return {
+      storeOrderNo: head.documentNo,
+      placedAt: head.documentDate,
+      customerName: head.customerName ?? "",
+      customerPhone: head.customerPhone ?? "",
+      branchName: head.branchName,
+      fulfilment: head.fulfilment ?? "collection",
+      payment: head.payment ?? "on_collection",
+      totalIncl: head.totalIncl,
+      currency: head.currency,
+      stages: stages.map((d) => ({
+        documentType: docType(d.documentType),
+        sageDocumentNo: d.sageDocumentNo,
+        status: STATUSES.find((s) => s === d.status) ?? "Pending",
+        failReason: d.failReason,
+        date: d.postedAt ?? d.createdAt,
+      })),
+      next: nextAction(stages),
+    };
+  });
+
+  const wanted = q.status === "problem" ? (o: AdminOrder) => o.next !== null : () => true;
+  return orders.filter(wanted).sort((a, b) => b.placedAt.localeCompare(a.placedAt));
+}
+
+/**
+ * Staff press the button on an order: try a document Sage refused again, or check a Pending one in
+ * Sage (made it after all → Posted; not there → sent again). Returns the order as it is now.
+ */
+export async function runNextStep(no: string): Promise<AdminOrder> {
+  const storeNo = no.trim().toUpperCase();
+  if (!/^[A-Z0-9-]{4,30}$/.test(storeNo)) throw new HttpError(400, "That isn't a store order number.");
+  if (stepping.has(storeNo)) throw new HttpError(409, "That order is being processed right now. Refresh in a moment.");
+
+  const work = (async () => {
+    const stages = await stagesOf(storeNo);
+    if (stages.length === 0) throw new HttpError(404, `There is no order ${storeNo}.`);
+    const last = stages[stages.length - 1];
+    const current = await readStage(docType(last.documentType), storeNo);
+    if (!current) throw new HttpError(404, `There is no order ${storeNo}.`);
+
+    try {
+      if (current.status === "Failed") {
+        await setStatus(current, "Pending");
+        await settle({ ...current, status: "Pending" }, true);
+      } else if (current.status === "Pending") {
+        await settle(current, true);
+      } else {
+        throw new HttpError(409, `This ${LABEL[current.documentType]} is already ${current.status.toLowerCase()} in Sage.`);
+      }
+    } catch (e) {
+      // Sage's own reason, for staff
+      if (e instanceof StepFailed) throw new HttpError(502, `Sage refused the ${LABEL[e.document]}: ${e.reason}`);
+      throw e;
+    }
+    const [now] = await listOrders({ search: storeNo, take: 20 });
+    return now;
+  })();
+
+  stepping.set(storeNo, work);
+  try {
+    return await work;
+  } finally {
+    stepping.delete(storeNo);
+  }
 }

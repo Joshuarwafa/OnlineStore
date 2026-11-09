@@ -3,6 +3,7 @@ import type {
   CatalogueItem,
   Company,
   CataloguePage,
+  DocumentType,
   CatalogueQuery,
   Category,
   Location,
@@ -30,6 +31,8 @@ export interface StoreApi {
   suggest(search: string): Promise<CatalogueItem[]>;
   /** The company's details for printed quotations */
   company(): Promise<Company>;
+  /** What checkout makes in Sage: a quotation or a sales order */
+  checkoutSettings(): Promise<{ checkoutDocument: DocumentType; allowQuotation: boolean }>;
 }
 
 const http: StoreApi = {
@@ -59,6 +62,7 @@ const http: StoreApi = {
     }),
   order: (no, contact) => request(`/orders/${encodeURIComponent(no)}${qs({ contact })}`),
   company: () => request(`/company`),
+  checkoutSettings: () => request(`/checkout/settings`),
   suggest: async (search) =>
     (await http.catalogue({ search, pageSize: 6, page: 1 })).items,
 };

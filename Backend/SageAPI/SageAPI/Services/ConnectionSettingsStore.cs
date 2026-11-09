@@ -17,7 +17,7 @@ namespace SageAPI.Services
     public class ConnectionSettingsStore : IConnectionSettingsStore
     {
         // The tables the store needs in its staging database
-        private static readonly string[] RequiredTables = { "dbo.StoreCategory", "dbo.InventoryCategory" };
+        private static readonly string[] RequiredTables = { "dbo.StoreCategory", "dbo.InventoryCategory", "dbo.StoreDocument", "dbo.StoreDocumentLine" };
 
         private readonly IOptionsMonitor<SageSettings> _settings;
         private readonly IDataProtector _protector;

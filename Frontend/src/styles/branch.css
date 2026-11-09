@@ -531,18 +531,8 @@
   }
 }
 .bnudge__hand {
-  font-size: 26px;
-  line-height: 1;
-  animation: point 1.2s ease-in-out infinite;
-}
-@keyframes point {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-6px);
-  }
+  width: 56px;
+  height: 56px;
 }
 .bnudge__body {
   display: grid;
@@ -623,8 +613,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .bnudge,
-  .bnudge__hand {
+  .bnudge {
     animation: none !important;
   }
 }
@@ -645,18 +634,9 @@
   gap: 6px;
 }
 .minechip__hand {
-  font-size: 26px;
-  line-height: 1;
-  animation: hand-nudge 1.1s ease-in-out infinite;
-}
-@keyframes hand-nudge {
-  0%,
-  100% {
-    transform: translateX(0);
-  }
-  50% {
-    transform: translateX(7px);
-  }
+  width: 60px;
+  height: 60px;
+  margin: -10px 0;
 }
 .minechip.is-empty {
   background: var(--green-50);
@@ -696,7 +676,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .minechip__hand,
   .minechip.is-empty {
     animation: none !important;
   }
@@ -706,10 +685,7 @@
   padding-left: 4px;
 }
 
-/* Branch already chosen: the hand nudges a few times on each page load, then rests beside the button */
-.minechip-wrap.is-set .minechip__hand {
-  animation-iteration-count: 4;
-}
+
 
 /* Checkout: which branch the quotation is for */
 .scheckout__branch {
@@ -728,4 +704,126 @@
 }
 .scheckout__branch .linkish {
   margin-left: auto;
+}
+
+/* ---------- the tapping hand (components/TapHand.tsx) ---------- */
+
+.taphand {
+  /* fixed, like a cursor: white with a dark outline on light and dark backgrounds */
+  --hand-ink: #14181f;
+  --hand-fill: #fff;
+  --hand-target: #3f444c;
+  display: inline-block;
+  flex: none;
+  line-height: 0;
+  color: var(--hand-ink);
+}
+.taphand svg {
+  display: block;
+  overflow: visible;
+}
+/* Drawn pointing up; turned to point at a button on its right */
+.taphand--right svg {
+  transform: rotate(90deg);
+}
+.taphand__shape {
+  fill: var(--hand-fill);
+  stroke: currentColor;
+  stroke-width: 3;
+  filter: drop-shadow(0 2px 2px rgb(0 0 0 / 0.18));
+}
+.taphand__line {
+  stroke: currentColor;
+  stroke-width: 2.2;
+}
+.taphand__dot {
+  fill: var(--hand-target);
+}
+.taphand__ring {
+  stroke: var(--hand-target);
+  stroke-width: 3;
+}
+
+/* One press every 1.6s: the finger pushes in, the dot squeezes, and the rings ripple out after it */
+.taphand__hand,
+.taphand__dot,
+.taphand__ring {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.taphand__hand {
+  transform-origin: 30% 10%;
+  animation: tap-press 1.6s cubic-bezier(0.45, 0, 0.25, 1) infinite;
+}
+.taphand__dot {
+  animation: tap-dot 1.6s ease-in-out infinite;
+}
+.taphand__ring {
+  animation: tap-ring 1.6s cubic-bezier(0.2, 0.6, 0.35, 1) infinite;
+}
+.taphand__ring--2 {
+  animation-delay: 0.18s;
+}
+@keyframes tap-press {
+  0%,
+  100% {
+    transform: translate(2px, 3px);
+  }
+  30% {
+    transform: translate(0, 0);
+  }
+  40% {
+    transform: translate(-0.5px, -0.5px) scale(0.93);
+  }
+  55% {
+    transform: translate(0, 0) scale(1);
+  }
+}
+@keyframes tap-dot {
+  0%,
+  28%,
+  100% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(0.82);
+  }
+  55% {
+    transform: scale(1.06);
+  }
+}
+@keyframes tap-ring {
+  0%,
+  36% {
+    opacity: 0;
+    transform: scale(0.55);
+  }
+  48% {
+    opacity: 1;
+  }
+  90%,
+  100% {
+    opacity: 0;
+    transform: scale(1.35);
+  }
+}
+
+/* Branch already chosen: a few presses on each page load, then it rests beside the button */
+.minechip-wrap.is-set .minechip__hand .taphand__hand,
+.minechip-wrap.is-set .minechip__hand .taphand__dot,
+.minechip-wrap.is-set .minechip__hand .taphand__ring {
+  animation-iteration-count: 4;
+}
+
+/* On the dark green tip bubble the dot and rings are white, so they show */
+.bnudge__hand {
+  --hand-target: #fff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .taphand__hand,
+  .taphand__dot,
+  .taphand__ring {
+    animation: none !important;
+  }
 }

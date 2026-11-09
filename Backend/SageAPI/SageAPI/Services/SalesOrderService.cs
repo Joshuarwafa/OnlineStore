@@ -1,4 +1,4 @@
-﻿using Pastel.Evolution;
+using Pastel.Evolution;
 using SageAPI.Interfaces;
 using SageAPI.Models;
 using System.Data;
@@ -14,60 +14,131 @@ namespace SageAPI.Services
             _sageConnection = sageConnection;
         }
 
-        public string ProcessSalesOrder(string Customer, List<SalesOrderLine> Lines)
+        /// <summary>
+        /// An open sales order. Saved, not processed: Process() would turn it into an invoice straight
+        /// away, while a saved order stays open in Sage and its Reserved quantities hold the stock
+        /// until it is invoiced or cancelled.
+        /// </summary>
+        public string ProcessSalesOrder(Models.SalesOrder Order)
         {
-            try
+            Step("Connecting to Sage", () => _sageConnection.LicenseInitialisation());
+
+            Pastel.Evolution.SalesOrder SO = new Pastel.Evolution.SalesOrder();
+            Step($"Loading customer '{Order.Customer}'", () => SO.Customer = new Customer(Order.Customer));
+
+            TaxMode taxMode = Order.PricesIncludeTax ? TaxMode.Inclusive : TaxMode.Exclusive;
+            Step("Setting the document header", () =>
             {
-                _sageConnection.LicenseInitialisation();
+                SO.TaxMode = taxMode;
+                ApplyHeader(SO, Order.ExternalOrderNo, Order.Description, Order.MessageLine1, Order.MessageLine2, Order.MessageLine3, Order.DeliverTo);
+            });
 
-                Pastel.Evolution.SalesOrder order = new Pastel.Evolution.SalesOrder();
-                order.Customer = new Customer(Customer);
-
-                foreach (var line in Lines)
+            for (int i = 0; i < Order.Lines.Count; i++)
+            {
+                var line = Order.Lines[i];
+                string where = string.IsNullOrWhiteSpace(line.Warehouse) ? "" : $" in warehouse '{line.Warehouse}'";
+                Step($"Line {i + 1}: item '{line.ItemCode}'{where}", () =>
                 {
-                    order.Detail.Add(line.ItemCode, line.Quantity, line.Price);
-                }
-
-                order.Save();
-
-                return order.OrderNo;
+                    OrderDetail OD = new OrderDetail();
+                    // Before Add: Sage refuses a line whose tax mode differs from the document's
+                    // (a new line is Exclusive; the store's documents are Inclusive)
+                    OD.TaxMode = taxMode;
+                    SO.Detail.Add(OD);
+                    OD.InventoryItem = new InventoryItem(line.ItemCode);
+                    if (!string.IsNullOrWhiteSpace(line.Warehouse)) OD.Warehouse = new Warehouse(line.Warehouse);
+                    OD.Quantity = line.Quantity;
+                    OD.Reserved = Order.ReserveStock ? line.Quantity : 0; // quantity held for this order
+                    OD.UnitSellingPrice = line.Price;
+                    if (!string.IsNullOrWhiteSpace(line.Note)) OD.Note = line.Note;
+                });
             }
-            catch (Exception)
-            {
 
-                throw;
+            Step("Saving the sales order", () => SO.Save());
+
+            return SO.OrderNo;
+        }
+
+        public string? FindByExternalOrderNo(string externalOrderNo, string type)
+        {
+            _sageConnection.LicenseInitialisation();
+            string safe = externalOrderNo.Trim().Replace("'", "''");
+            // Sales documents are DocType 4. Quotations are in the Quote state (DocState 2) and their
+            // number is InvNumber (SOQ0002); an open sales order's number is its OrderNum; a processed
+            // (archived, DocState 4) document carries its invoice number in InvNumber.
+            string pick = type switch
+            {
+                "Quotation" => "InvNumber from InvNum where DocState = 2",
+                "Invoice" => "InvNumber from InvNum where DocState = 4 and isnull(InvNumber, '') <> ''",
+                _ => "OrderNum from InvNum where DocState <> 2 and isnull(OrderNum, '') <> ''"
+            };
+            DataTable rows = DatabaseContext.ExecuteCommandDataTable($@"
+                select top 1 {pick.Replace(" from ", " as DocumentNo from ")}
+                  and DocType = 4 and ExtOrderNum = '{safe}'
+                order by AutoIndex desc");
+            if (rows.Rows.Count == 0) return null;
+            var no = Convert.ToString(rows.Rows[0]["DocumentNo"])?.Trim();
+            return string.IsNullOrEmpty(no) ? null : no;
+        }
+
+        /// <summary>Optional header fields shared by quotations, sales orders and invoices (all sales orders in the SDK).</summary>
+        private static void ApplyHeader(Pastel.Evolution.SalesOrder doc, string? externalOrderNo, string? description,
+            string? message1, string? message2, string? message3, SalesOrderAddress? deliverTo)
+        {
+            if (!string.IsNullOrWhiteSpace(externalOrderNo)) doc.ExternalOrderNo = externalOrderNo;
+            if (!string.IsNullOrWhiteSpace(description)) doc.Description = description;
+            if (!string.IsNullOrWhiteSpace(message1)) doc.MessageLine1 = message1;
+            if (!string.IsNullOrWhiteSpace(message2)) doc.MessageLine2 = message2;
+            if (!string.IsNullOrWhiteSpace(message3)) doc.MessageLine3 = message3;
+
+            if (deliverTo != null)
+            {
+                var d = deliverTo;
+                doc.DeliverTo = new Address(d.Line1 ?? "", d.Line2 ?? "", d.Line3 ?? "", d.Line4 ?? "", d.Line5 ?? "", d.PostalCode ?? "");
             }
         }
 
-        public string ProcessSalesOrderInvoice(string Customer, DateTime InvoiceDate, SalesOrderAddress DeliverTo, string Project, List<SalesOrderInvoiceLine> Lines)
+        /// <summary>
+        /// An invoice: built as a sales order with every line set to process in full, then processed
+        /// (stock goes out, the sale is posted). Item lines or GL lines. The online store also sends its
+        /// order number, message lines, a warehouse per line and VAT-inclusive prices; all optional.
+        /// </summary>
+        public string ProcessSalesOrderInvoice(SalesOrderInvoice Invoice)
         {
-            try
+            Step("Connecting to Sage", () => _sageConnection.LicenseInitialisation());
+
+            Pastel.Evolution.SalesOrder SO = new Pastel.Evolution.SalesOrder();
+            Step($"Loading customer '{Invoice.Customer}'", () =>
             {
-                _sageConnection.LicenseInitialisation();
-
-                Pastel.Evolution.SalesOrder SO = new Pastel.Evolution.SalesOrder();
-                SO.Customer = new Customer(Customer);
-                SO.InvoiceDate = InvoiceDate;
+                SO.Customer = new Customer(Invoice.Customer);
+                SO.InvoiceDate = Invoice.InvoiceDate ?? DateTime.Now;
                 SO.InvoiceTo = SO.Customer.PostalAddress.Condense();
+            });
 
-                if (DeliverTo != null)
-                {
-                    SO.DeliverTo = new Address(DeliverTo.Line1, DeliverTo.Line2, DeliverTo.Line3, DeliverTo.Line4, DeliverTo.Line5, DeliverTo.PostalCode);
-                }
+            TaxMode? taxMode = Invoice.PricesIncludeTax == null ? null : Invoice.PricesIncludeTax.Value ? TaxMode.Inclusive : TaxMode.Exclusive;
+            Step("Setting the document header", () =>
+            {
+                if (taxMode != null) SO.TaxMode = taxMode.Value;
+                ApplyHeader(SO, Invoice.ExternalOrderNo, Invoice.Description, Invoice.MessageLine1, Invoice.MessageLine2, Invoice.MessageLine3, Invoice.DeliverTo);
+                if (!string.IsNullOrWhiteSpace(Invoice.Project)) SO.Project = new Project(Invoice.Project);
+            });
 
-                if (!string.IsNullOrWhiteSpace(Project))
-                {
-                    SO.Project = new Project(Project);
-                }
-
-                foreach (var line in Lines)
+            for (int i = 0; i < Invoice.Lines.Count; i++)
+            {
+                var line = Invoice.Lines[i];
+                string what = !string.IsNullOrWhiteSpace(line.ItemCode)
+                    ? $"item '{line.ItemCode}'{(string.IsNullOrWhiteSpace(line.Warehouse) ? "" : $" in warehouse '{line.Warehouse}'")}"
+                    : $"GL account '{line.GLAccount}'";
+                Step($"Line {i + 1}: {what}", () =>
                 {
                     OrderDetail OD = new OrderDetail();
+                    // Before Add: Sage refuses a line whose tax mode differs from the document's
+                    if (taxMode != null) OD.TaxMode = taxMode.Value;
                     SO.Detail.Add(OD);
 
                     if (!string.IsNullOrWhiteSpace(line.ItemCode))
                     {
                         OD.InventoryItem = new InventoryItem(line.ItemCode);
+                        if (!string.IsNullOrWhiteSpace(line.Warehouse)) OD.Warehouse = new Warehouse(line.Warehouse);
                         OD.Quantity = line.Quantity;
                         OD.ToProcess = OD.Quantity;
                         OD.UnitSellingPrice = line.Price ?? OD.InventoryItem.SellingPrices[SO.Customer.DefaultPriceList].PriceIncl;
@@ -79,17 +150,13 @@ namespace SageAPI.Services
                         OD.ToProcess = OD.Quantity;
                         OD.UnitSellingPrice = line.Price ?? 0;
                     }
-                }
-
-                SO.Process();
-
-                return SO.Reference;
+                    if (!string.IsNullOrWhiteSpace(line.Note)) OD.Note = line.Note;
+                });
             }
-            catch (Exception)
-            {
 
-                throw;
-            }
+            Step("Processing the invoice", () => SO.Process());
+
+            return SO.Reference;
         }
 
         public string ProcessSalesOrderQuotation(Models.SalesOrderQuotation Quotation)
@@ -103,17 +170,7 @@ namespace SageAPI.Services
             Step("Setting the document header", () =>
             {
                 SOQ.TaxMode = taxMode;
-                if (!string.IsNullOrWhiteSpace(Quotation.ExternalOrderNo)) SOQ.ExternalOrderNo = Quotation.ExternalOrderNo;
-                if (!string.IsNullOrWhiteSpace(Quotation.Description)) SOQ.Description = Quotation.Description;
-                if (!string.IsNullOrWhiteSpace(Quotation.MessageLine1)) SOQ.MessageLine1 = Quotation.MessageLine1;
-                if (!string.IsNullOrWhiteSpace(Quotation.MessageLine2)) SOQ.MessageLine2 = Quotation.MessageLine2;
-                if (!string.IsNullOrWhiteSpace(Quotation.MessageLine3)) SOQ.MessageLine3 = Quotation.MessageLine3;
-
-                if (Quotation.DeliverTo != null)
-                {
-                    var d = Quotation.DeliverTo;
-                    SOQ.DeliverTo = new Address(d.Line1 ?? "", d.Line2 ?? "", d.Line3 ?? "", d.Line4 ?? "", d.Line5 ?? "", d.PostalCode ?? "");
-                }
+                ApplyHeader(SOQ, Quotation.ExternalOrderNo, Quotation.Description, Quotation.MessageLine1, Quotation.MessageLine2, Quotation.MessageLine3, Quotation.DeliverTo);
             });
 
             for (int i = 0; i < Quotation.Lines.Count; i++)

@@ -95,6 +95,9 @@ function buildQuote(lines: { code: string; qty: number }[]): Quote {
 }
 
 export const api: StoreApi = {
+  async checkoutSettings() {
+    return { checkoutDocument: "SalesOrder" as const, allowQuotation: true };
+  },
   async company() {
     return { name: "Demo Store (Pvt) Ltd", address: ["00 Example Street", "Bulawayo", "", ""], taxNumber: "000000000", telephone: "+263 29 000 0000", fax: "", email: "", footer: "" };
   },

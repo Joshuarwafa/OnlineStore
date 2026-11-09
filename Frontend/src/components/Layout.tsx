@@ -7,6 +7,7 @@ import { DocketDrawer } from "./Docket";
 import { SearchBox } from "./SearchBox";
 import { Icon } from "./Icon";
 import { BranchButton, BranchPicker } from "./BranchPicker";
+import { docWords, useCheckoutDocument } from "../lib/documents";
 
 export function Wordmark() {
   return (
@@ -27,6 +28,7 @@ export function Wordmark() {
  */
 export function Layout() {
   const cart = useCart();
+  const words = docWords(useCheckoutDocument());
   const { pathname, search } = useLocation();
 
   useEffect(() => {
@@ -79,7 +81,7 @@ export function Layout() {
       <footer className="sfooter">
         <div className="sfooter__inner">
           <p className="sfooter__links">
-            <Link to="/track">My quotations</Link>
+            <Link to="/track">My {words.plural}</Link>
             <Link to="/contact">Contact us</Link>
             {config.contactPhone && (
               <a href={telHref}>

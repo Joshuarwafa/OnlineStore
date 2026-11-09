@@ -2266,3 +2266,173 @@ button.file-row:hover {
   margin: 0;
   font-weight: 600;
 }
+
+/* Maintenance → Workflow */
+.workflow-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.workflow-choice {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  cursor: pointer;
+}
+.workflow-choice:hover {
+  border-color: var(--accent);
+}
+.workflow-choice.on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  background: var(--accent-soft);
+}
+.workflow-choice input {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  accent-color: var(--accent);
+}
+.workflow-choice:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.workflow-choice__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 24px;
+  font-weight: 600;
+}
+.workflow-choice__text {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+.workflow-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+.workflow-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+.workflow-check input {
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+.workflow-check span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.flow-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 0;
+}
+.flow-line__step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+}
+.flow-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.85rem;
+}
+.flow-pill.muted {
+  border-color: var(--border);
+  background: var(--track);
+  color: var(--text-muted);
+}
+.workflow-note {
+  margin: 14px 0 0;
+}
+
+/* Sales → Documents */
+.doc-stages {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.doc-stage {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+.doc-stage .mono {
+  font-variant-numeric: tabular-nums;
+}
+.doc-stage.posted {
+  border-color: color-mix(in srgb, var(--status-good) 45%, var(--border));
+}
+.doc-stage.pending {
+  border-style: dashed;
+  color: var(--text-muted);
+}
+.doc-stage.failed {
+  border-color: var(--error);
+  background: var(--error-soft);
+  color: var(--error);
+}
+.doc-stage-sep {
+  color: var(--text-muted);
+}
+.doc-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+.doc-stage.posted .doc-dot {
+  background: var(--status-good);
+}
+.doc-stage.failed .doc-dot {
+  background: var(--status-critical);
+}
+.doc-reason {
+  display: block;
+  margin-top: 4px;
+  max-width: 360px;
+  color: var(--error);
+  font-size: 0.8rem;
+}
+.doc-row-error td {
+  padding-top: 0;
+  color: var(--error);
+  font-size: 0.85rem;
+}
+.doc-who {
+  display: flex;
+  flex-direction: column;
+}
+.data-table .button.small {
+  padding: 4px 10px;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}

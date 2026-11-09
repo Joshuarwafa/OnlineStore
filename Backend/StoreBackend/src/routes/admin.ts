@@ -6,6 +6,8 @@ import { sageApi } from "../sageApi.js";
 import { saveShopWarehouses, shopWarehouses } from "../shopWarehouses.js";
 import { saveCashAccount, searchCustomers, shopCustomers } from "../shopCustomers.js";
 import { saveShopCompany, shopCompany } from "../shopCompany.js";
+import { saveShopWorkflow, shopWorkflow } from "../shopWorkflow.js";
+import { listOrders, runNextStep } from "../orders.js";
 
 export const admin = Router();
 admin.use(sameOriginOnly);
@@ -91,6 +93,31 @@ admin.get("/settings/company", requireAdmin, async (_req, res) => {
 
 admin.put("/settings/company", requireAdmin, async (req, res) => {
   res.json(await saveShopCompany(req.body));
+});
+
+// ---------- workflow ----------
+
+// What checkout makes in Sage: a quotation, or a sales order that holds the stock (Maintenance → Workflow)
+admin.get("/settings/workflow", requireAdmin, async (_req, res) => {
+  res.json(await shopWorkflow());
+});
+
+admin.put("/settings/workflow", requireAdmin, async (req, res) => {
+  res.json(await saveShopWorkflow(req.body));
+});
+
+// ---------- documents ----------
+
+// Online orders with their steps so far (quotation, sales order, invoice) and what staff can do next.
+// status = waiting (a step to confirm) | problem (failed or not confirmed by Sage) | anything else = all
+admin.get("/documents", requireAdmin, async (req, res) => {
+  const str = (k: string) => (typeof req.query[k] === "string" ? (req.query[k] as string) : undefined);
+  res.json({ orders: await listOrders({ search: str("search"), status: str("status") }) });
+});
+
+// Staff confirm the next step of an order (or try a failed step again)
+admin.post("/documents/:no/next", requireAdmin, async (req, res) => {
+  res.json(await runNextStep(String(req.params.no)));
 });
 
 // ---------- shop warehouses ----------

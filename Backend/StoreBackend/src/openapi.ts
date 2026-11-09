@@ -198,9 +198,9 @@ export const openapi = {
     "/api/orders": {
       post: {
         tags: ["Store"],
-        summary: "Turn the cart into a quotation in Sage Evolution",
+        summary: "Turn the cart into a sales order, invoice or quotation in Sage Evolution",
         description:
-          "Re-prices every line live, checks stock at the shopper's branch, then creates a Sage quotation on the cash account chosen under Maintenance → Customers. The shopper's name, phone, email and address go on the quotation (Deliver To and message lines). The same Idempotency-Key always returns the same quotation.",
+          "Re-prices every line live, checks stock at the shopper's branch, then creates the workflow's first document (Maintenance → Workflow: a sales order or an invoice) on the cash account chosen under Maintenance → Customers. With quotation: true (when the workflow allows quotations) it creates a quotation instead. The shopper's name, phone, email and address go on the document (Deliver To and message lines). Saved in the store database first (Pending), then in Sage (Posted). The same Idempotency-Key always returns the same order.",
         parameters: [{ name: "Idempotency-Key", in: "header", required: true, schema: { type: "string", minLength: 8, maxLength: 100 } }],
         requestBody: {
           required: true,
@@ -211,6 +211,7 @@ export const openapi = {
                 fulfilment: "collection",
                 address: null,
                 payment: "on_collection",
+                quotation: false,
                 branch: "2",
                 lines: [{ code: "377916U/WRI", qty: 1 }],
               },
@@ -218,11 +219,11 @@ export const openapi = {
           },
         },
         responses: {
-          201: { description: "Quotation created: { storeOrderNo, status, sageDocumentNo, duplicate }" },
-          200: { description: "This Idempotency-Key was already used: the existing quotation" },
+          201: { description: "Created: { documentType (SalesOrder | Invoice | Quotation), storeOrderNo, status, sageDocumentNo, duplicate }" },
+          200: { description: "This Idempotency-Key was already used: the existing order" },
           400: errorResponse("Missing name or phone, bad cart, or no Idempotency-Key"),
           409: { description: "Prices or stock changed: the body is a fresh Quote", content: { "application/json": { schema: { $ref: "#/components/schemas/Quote" } } } },
-          502: errorResponse("Sage refused the quotation (reason logged on the server)"),
+          502: errorResponse("Sage refused the document (reason logged on the server and shown in admin → Documents)"),
           503: errorResponse("No cash account chosen in the admin portal"),
         },
       },

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { chooseBranch, closeBranchPicker, openBranchPicker, useBranchState } from "../lib/branch";
 import { byTown, myBranchOf, PICKER_FROM, shortName, useLocations } from "../lib/locations";
 import { Icon } from "./Icon";
+import { TapHand } from "./TapHand";
 
 const NUDGE_KEY = "branchNudge.closed";
 
@@ -38,9 +39,7 @@ function BranchNudge() {
 
   return (
     <div className="bnudge" role="status">
-      <span className="bnudge__hand" aria-hidden="true">
-        👆
-      </span>
+      <TapHand className="bnudge__hand" />
       <div className="bnudge__body">
         <strong>Choose your branch</strong>
         <span>See what's in stock near you.</span>

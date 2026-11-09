@@ -10,11 +10,13 @@ import { recallOrderContact, rememberOrderContact } from "../lib/orders";
 import { ErrorPanel, Spinner } from "../components/bits";
 import { TrackForm } from "./Track";
 import { QuotationDoc } from "../components/QuotationDoc";
+import { docWords, useCheckoutDocument } from "../lib/documents";
+import type { DocWords } from "../lib/documents";
 
-// Shopper-facing steps. "Posted" = the quotation is saved in Sage.
-const STEPS: { key: "received" | "booked" | "ready"; title: string; note: string }[] = [
+// Shopper-facing steps. "Posted" = the quotation or sales order is saved in Sage.
+const steps = (w: DocWords): { key: "received" | "booked" | "ready"; title: string; note: string }[] => [
   { key: "received", title: "Received", note: "We have your cart." },
-  { key: "booked", title: "Quotation ready", note: "Your quotation is saved with us." },
+  { key: "booked", title: w.ready, note: w.readyNote },
   { key: "ready", title: "We'll call you", note: "To confirm stock, payment and collection or delivery." },
 ];
 
@@ -35,6 +37,9 @@ export function Order() {
   const [error, setError] = useState<Error>();
   const [attempt, setAttempt] = useState(0);
   const [company, setCompany] = useState<Company | null>(null);
+  // Until the document loads, word it as checkout does now
+  const checkoutType = useCheckoutDocument();
+  const w = docWords(order?.documentType ?? checkoutType);
 
   // The company's own details for the top of the printed quotation (admin → Maintenance → Company).
   // Re-read whenever the shopper comes back to this tab, so a change saved in the admin shows
@@ -66,7 +71,7 @@ export function Order() {
     requestAnimationFrame(() => requestAnimationFrame(() => window.print()));
   };
 
-  useDocumentTitle(`Quotation ${no}`, config.storeName);
+  useDocumentTitle(`${w.title} ${no}`, config.storeName);
 
   useEffect(() => {
     if (!email) return;
@@ -99,7 +104,7 @@ export function Order() {
           <p className="eyebrow">Order {no}</p>
           <h1 className="page__title">Confirm it's yours</h1>
         </header>
-        <p className="lede">Enter the phone number you gave at checkout to see this quotation.</p>
+        <p className="lede">Enter the phone number you gave at checkout to see this {w.noun}.</p>
         <TrackForm initialNo={no} onFound={(n, e) => navigate(`/order/${encodeURIComponent(n)}`, { replace: true, state: { contact: e } })} />
       </div>
     );
@@ -110,11 +115,11 @@ export function Order() {
       <div className="page page--narrow">
         <ErrorPanel
           error={error}
-          title={error instanceof ApiError && error.status === 404 ? "Quotation not found" : "We couldn't load this quotation"}
+          title={error instanceof ApiError && error.status === 404 ? "Not found" : `We couldn't load this ${w.noun}`}
           onRetry={() => setAttempt((a) => a + 1)}
         />
         <Link to="/track" className="linkish">
-          Look up a different quotation
+          Look up a different {w.noun}
         </Link>
       </div>
     );
@@ -123,7 +128,7 @@ export function Order() {
   if (!order) {
     return (
       <div className="page page--narrow order-loading">
-        <Spinner /> Opening quotation {no}…
+        <Spinner /> Opening {w.noun} {no}…
       </div>
     );
   }
@@ -137,11 +142,11 @@ export function Order() {
       {isNew && (
         <div className="order__thanks">
           <p className="eyebrow">Thank you{order.shopperName ? `, ${order.shopperName.split(" ")[0]}` : ""}</p>
-          <h1 className="page__title">Your quotation is ready.</h1>
+          <h1 className="page__title">{order.documentType === "Quotation" || !order.documentType ? "Your quotation is ready." : "Your order is placed."}</h1>
           <p className="lede">
             {order.sageDocumentNo ? (
               <>
-                Quotation <strong className="mono">{order.sageDocumentNo}</strong> is saved with us.{" "}
+                {w.title} <strong className="mono">{order.sageDocumentNo}</strong> is saved with us.{" "}
               </>
             ) : null}
             We'll call you to confirm. Keep your number in case you need it.
@@ -159,7 +164,7 @@ export function Order() {
           </span>
           {order.status === "Posted" && (
             <span className={`stamp stamp--ok ${isNew ? "is-fresh" : ""}`} aria-hidden="true">
-              Quoted
+              {w.stamp}
             </span>
           )}
           {failed && (
@@ -173,7 +178,7 @@ export function Order() {
           <span className="stub__total">{formatMoney(order.totalIncl, order.currency)}</span>
           {order.sageDocumentNo && (
             <>
-              <span className="stub__label">Quotation</span>
+              <span className="stub__label">{w.title}</span>
               <span className="mono">{order.sageDocumentNo}</span>
             </>
           )}
@@ -182,12 +187,12 @@ export function Order() {
 
       {cancelled ? (
         <div className="panel">
-          <p className="panel__title">This quotation was cancelled</p>
+          <p className="panel__title">This {w.noun} was cancelled</p>
           <p>If that's unexpected, contact us and give your number.</p>
         </div>
       ) : (
         <ol className={`track ${failed ? "track--hold" : ""}`} aria-label="Progress">
-          {STEPS.map((s, i) => {
+          {steps(w).map((s, i) => {
             const state = failed ? (i === 0 ? "done" : i === 1 ? "hold" : "next") : i < at ? "done" : i === at ? "now" : "next";
             return (
               <li key={s.key} className={`track__step is-${state}`} aria-current={state === "now" ? "step" : undefined}>
@@ -206,9 +211,9 @@ export function Order() {
 
       {error && order && <p className="order__live order__live--warn">Couldn't refresh just now. Showing the last status we saw.</p>}
 
-      <section className="qdoc-wrap" aria-label="Your quotation">
+      <section className="qdoc-wrap" aria-label={`Your ${w.noun}`}>
         <div className="qdoc-wrap__head">
-          <h2>Your quotation</h2>
+          <h2>Your {w.noun}</h2>
           <button className="btn btn--ghost" onClick={printQuotation}>
             Print or save as PDF
           </button>
@@ -223,7 +228,7 @@ export function Order() {
           Keep shopping
         </Link>
         <button className="btn btn--ghost" onClick={printQuotation}>
-          Print quotation
+          Print {w.noun}
         </button>
       </div>
     </div>

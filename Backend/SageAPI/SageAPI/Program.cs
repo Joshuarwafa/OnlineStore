@@ -35,6 +35,7 @@ if (OperatingSystem.IsWindows())
 
 builder.Services.AddSingleton<IConnectionSettingsStore, ConnectionSettingsStore>();
 builder.Services.AddScoped<IStoreCategoryService, StoreCategoryService>();
+builder.Services.AddScoped<IStoreDocumentService, StoreDocumentService>();
 
 builder.Services.AddSingleton<ISageConnection, SageConnectionService>();
 builder.Services.AddScoped<IGLJournal, GLJournalService>();

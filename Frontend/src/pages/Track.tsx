@@ -6,8 +6,10 @@ import { useDocumentTitle } from "../lib/useAsync";
 import { recentOrders } from "../lib/orders";
 import { Spinner } from "../components/bits";
 import { Icon } from "../components/Icon";
+import { docWords, useCheckoutDocument } from "../lib/documents";
 
 export function TrackForm({ initialNo = "", onFound }: { initialNo?: string; onFound: (no: string, contact: string) => void }) {
+  const words = docWords(useCheckoutDocument());
   const [no, setNo] = useState(initialNo);
   const [contact, setContact] = useState("");
   const [busy, setBusy] = useState(false);
@@ -45,14 +47,15 @@ export function TrackForm({ initialNo = "", onFound }: { initialNo?: string; onF
         </p>
       )}
       <button className="btn btn--signal btn--xl btn--block" disabled={busy}>
-        {busy ? <Spinner label="Looking" /> : "Find my quotation"}
+        {busy ? <Spinner label="Looking" /> : `Find my ${words.noun}`}
       </button>
     </form>
   );
 }
 
 export function Track() {
-  useDocumentTitle("My quotations", config.storeName);
+  const words = docWords(useCheckoutDocument());
+  useDocumentTitle(`My ${words.plural}`, config.storeName);
   const navigate = useNavigate();
   const recent = recentOrders();
 
@@ -61,11 +64,11 @@ export function Track() {
       <Link to="/" className="backlink">
         <Icon name="back" /> Back to products
       </Link>
-      <h1 className="shop__title">My quotations</h1>
+      <h1 className="shop__title">My {words.plural}</h1>
 
       {recent.length > 0 && (
         <div className="recent">
-          <p className="field__label">Your recent quotations</p>
+          <p className="field__label">Your recent {words.plural}</p>
           <ul>
             {recent.map((no) => (
               <li key={no}>

@@ -35,7 +35,12 @@ interface InventoryRow {
   warehouseCode: string;
   warehouseName: string;
   qtyOnHand: number;
+  /** Held for open sales orders; the shop sells only what is on hand and not reserved. */
+  qtyReserved?: number;
 }
+
+/** Stock the shop can sell: on hand, less what open sales orders have reserved. */
+const free = (r: InventoryRow) => Math.max(0, (r.qtyOnHand ?? 0) - (r.qtyReserved ?? 0));
 
 interface PriceRow {
   itemCode: string;
@@ -85,7 +90,7 @@ async function load(): Promise<void> {
     if (!r.item) continue;
     if (wanted.size && !wanted.has(r.warehouseCode)) continue; // vans, returns, expired goods...
     if (r.warehouseCode && r.warehouseName) sageWarehouseNames.set(r.warehouseCode, r.warehouseName.trim());
-    const here = { warehouse: r.warehouseCode, qty: r.qtyOnHand ?? 0 };
+    const here = { warehouse: r.warehouseCode, qty: free(r) };
     const existing = byCode.get(r.item);
     if (existing) {
       existing.qtyOnHand += here.qty;
@@ -232,8 +237,8 @@ export async function liveProduct(code: string) {
   const stock = found[0];
   for (const r of found) if (r.warehouseCode && r.warehouseName) sageWarehouseNames.set(r.warehouseCode, r.warehouseName.trim());
   const byWarehouse: LocationStock[] = codes.length
-    ? codes.map((w, n) => ({ warehouse: w, qty: rows[n]?.qtyOnHand ?? 0 }))
-    : found.map((r) => ({ warehouse: r.warehouseCode, qty: r.qtyOnHand ?? 0 }));
+    ? codes.map((w, n) => ({ warehouse: w, qty: rows[n] ? free(rows[n]) : 0 }))
+    : found.map((r) => ({ warehouse: r.warehouseCode, qty: free(r) }));
   const layout = await storeLayout();
   if (layout.hidden.has(stock.item.toLowerCase())) throw new HttpError(404, `Item '${code}' isn't sold in the online store.`);
   const price = prices?.prices.find((p) => p.priceListName === config.priceList);

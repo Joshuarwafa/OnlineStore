@@ -12,6 +12,7 @@ import { openBranchPicker, useBranchState } from "../lib/branch";
 import { myBranchOf, PICKER_FROM, useLocations } from "../lib/locations";
 import { Empty, Spinner } from "../components/bits";
 import { Icon } from "../components/Icon";
+import { docWords, useCheckoutSettings } from "../lib/documents";
 
 type Errors = Partial<Record<"name" | "phone" | "email" | "address", string>>;
 
@@ -22,11 +23,14 @@ interface Change {
 
 /**
  * One short form and one button. Only name and phone are required.
- * Pressing the button turns the cart into a quotation in Sage Evolution. Prices and stock are
+ * Pressing the button turns the cart into a quotation or sales order in Sage Evolution (admin →
+ * Maintenance → Workflow). Prices and stock are
  * re-checked first (at the shopper's branch); the shopper only sees that step if something changed.
  */
 export function Checkout() {
   useDocumentTitle("Checkout", config.storeName);
+  const settings = useCheckoutSettings();
+  const words = docWords(settings.checkoutDocument);
   const cart = useCart();
   const navigate = useNavigate();
   const locations = useLocations();
@@ -44,12 +48,15 @@ export function Checkout() {
   const [errors, setErrors] = useState<Errors>({});
 
   const [busy, setBusy] = useState(false);
+  // Which button is working: the order, or "Just get a quotation"
+  const [asking, setAsking] = useState<"order" | "quote">("order");
   const [changes, setChanges] = useState<Change[]>([]);
   const [failure, setFailure] = useState<string | null>(null);
 
   // One key per order attempt. Pressing the button again after a network hiccup reuses it,
   // so the backend returns the order it already has instead of creating a second one.
   const idempotencyKey = useRef(crypto.randomUUID());
+  const lastAsked = useRef<"order" | "quote">("order");
 
   const payments = config.paymentMethods.filter((m) => (fulfilment === "collection" ? m !== "on_delivery" : m !== "on_collection"));
   const activePayment = payments.includes(payment) ? payment : payments[0];
@@ -110,9 +117,14 @@ export function Checkout() {
     return found;
   }
 
-  async function placeOrder() {
+  async function placeOrder(quotation: boolean) {
     setFailure(null);
     if (!validate()) return;
+    // An order and a quotation are different requests: switching buttons starts a fresh attempt
+    const mode = quotation ? "quote" : "order";
+    if (mode !== lastAsked.current) idempotencyKey.current = crypto.randomUUID();
+    lastAsked.current = mode;
+    setAsking(mode);
     setBusy(true);
     try {
       // Re-check prices and stock first. If anything moved, show it and let the shopper press again.
@@ -139,6 +151,7 @@ export function Checkout() {
               : null,
           payment: activePayment,
           branch: branch?.code ?? null,
+          quotation,
           lines: cart.lines.map(({ code, qty }) => ({ code, qty })),
         },
         idempotencyKey.current,
@@ -241,7 +254,7 @@ export function Checkout() {
         noValidate
         onSubmit={(e) => {
           e.preventDefault();
-          placeOrder();
+          placeOrder(false);
         }}
       >
         <fieldset disabled={busy}>
@@ -317,22 +330,36 @@ export function Checkout() {
           <div className="panel panel--error" role="alert">
             <p className="panel__title">That didn't go through</p>
             <p>{failure}</p>
-            <p className="panel__fine">Pressing the button again is safe. You won't get two quotations.</p>
+            <p className="panel__fine">Pressing the button again is safe. You won't get two {asking === "quote" ? "quotations" : "orders"}.</p>
           </div>
         )}
 
         <button className="btn btn--signal btn--xl btn--block" type="submit" disabled={busy || cart.lines.length === 0}>
-          {busy ? (
+          {busy && asking === "order" ? (
             <>
-              <Spinner label="Creating quotation" /> Creating your quotation…
+              <Spinner label="Placing your order" /> Placing your order…
             </>
           ) : (
             <>
-              <Icon name="check" /> Get my quotation · {formatMoney(cart.subtotal)}
+              <Icon name="check" /> {words.action} · {formatMoney(cart.subtotal)}
             </>
           )}
         </button>
-        <p className="scheckout__fine">No account needed. You'll get a quotation number straight away, and we'll call {phone.trim() || "you"} to confirm.</p>
+        {settings.allowQuotation && (
+          <button className="btn btn--ghost btn--block scheckout__quote" type="button" disabled={busy || cart.lines.length === 0} onClick={() => placeOrder(true)}>
+            {busy && asking === "quote" ? (
+              <>
+                <Spinner label="Creating your quotation" /> Creating your quotation…
+              </>
+            ) : (
+              "Just get a quotation"
+            )}
+          </button>
+        )}
+        <p className="scheckout__fine">
+          No account needed. You'll get your number straight away, and we'll call {phone.trim() || "you"} to confirm.
+          {settings.allowQuotation && " A quotation holds nothing; we'll turn it into your order when you're ready."}
+        </p>
       </form>
     </div>
   );

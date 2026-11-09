@@ -13,6 +13,7 @@ namespace SageAPI.Services
 		                                        ,w.Code						WarehouseCode
 		                                        ,w.Name						WarehouseName
 		                                        ,isnull(sum(st.qtyOnHand),0)	qtyOnHand
+		                                        ,isnull(sum(st.QtyReserved),0)	qtyReserved
 
 		                                        from
                                         StkItem s

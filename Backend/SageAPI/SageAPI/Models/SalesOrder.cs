@@ -1,8 +1,13 @@
 ﻿namespace SageAPI.Models
 {
-    public class SalesOrder
+    /// <summary>
+    /// A sales order. It is saved, not processed, so it stays open in Sage and (with ReserveStock)
+    /// holds the stock until it is invoiced or cancelled. Old callers that send only Customer and
+    /// Lines still work.
+    /// </summary>
+    public class SalesOrder : SalesDocumentRequest
     {
-        public string Customer { get; set; }
-        public List<SalesOrderLine> Lines { get; set; } = new List<SalesOrderLine>();
+        /// <summary>Reserve each line's quantity in its warehouse. Default true.</summary>
+        public bool ReserveStock { get; set; } = true;
     }
 }

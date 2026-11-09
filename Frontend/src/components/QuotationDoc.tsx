@@ -1,6 +1,7 @@
 import type { Company, OrderStatus } from "../types";
+import { docWords } from "../lib/documents";
 
-// The printable quotation, laid out like the Sage Evolution quotation:
+// The printable quotation or sales order, laid out like the Sage Evolution quotation:
 // company (from admin → Maintenance → Company) top-left, tax and phone top-right, "To:" the
 // customer account, a row of boxes, the lines, totals, a signature block and the message lines.
 
@@ -18,11 +19,12 @@ export function QuotationDoc({ order, company }: { order: OrderStatus; company: 
   const date = new Date(order.placedAt).toLocaleDateString("en-GB", { day: "numeric", month: "numeric", year: "numeric" });
   const address = company?.address.filter((l) => l.trim()) ?? [];
   const messages = (order.messages ?? []).filter((m) => m.trim());
+  const title = docWords(order.documentType).title;
 
   return (
-    <article className="qdoc" aria-label={`Quotation ${order.sageDocumentNo ?? order.storeOrderNo}`}>
+    <article className="qdoc" aria-label={`${title} ${order.sageDocumentNo ?? order.storeOrderNo}`}>
       <header className="qdoc__top">
-        <h2 className="qdoc__title">Quotation</h2>
+        <h2 className="qdoc__title">{title}</h2>
         <span className="qdoc__page">Page 1 of 1</span>
       </header>
 
