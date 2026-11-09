@@ -1,0 +1,238 @@
+/* The printable quotation (components/QuotationDoc.tsx), in the style of the Sage Evolution
+   quotation. Always black on white, like paper, in light and dark mode. */
+
+.qdoc-wrap {
+  margin-top: 1.5rem;
+}
+.qdoc-wrap__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+.qdoc-wrap__head h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+/* Wide like an A4 page: scrolls sideways inside its frame on phones, never the whole page */
+.qdoc-scroll {
+  overflow-x: auto;
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 8px 28px -12px rgb(0 0 0 / 0.25);
+}
+
+.qdoc {
+  --qdoc-ink: #111;
+  --qdoc-navy: #0b1f8a;
+  --qdoc-line: #333;
+  min-width: 680px;
+  padding: 36px 40px 28px;
+  background: #fff;
+  color: var(--qdoc-ink);
+  font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.qdoc p {
+  margin: 0;
+}
+
+.qdoc__top {
+  position: relative;
+  text-align: center;
+  margin-bottom: 18px;
+}
+.qdoc__title {
+  margin: 0;
+  color: var(--qdoc-navy);
+  font-family: inherit;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+.qdoc__page {
+  position: absolute;
+  top: 2px;
+  right: 0;
+  font-size: 11px;
+  color: #777;
+}
+
+.qdoc__parties {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  min-height: 150px;
+}
+.qdoc__from {
+  display: flex;
+  flex-direction: column;
+}
+.qdoc__to {
+  display: flex;
+  flex-direction: column;
+  margin-top: 6px;
+}
+.qdoc__contact {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-content: start;
+  gap: 0 14px;
+  margin: 0;
+}
+.qdoc__contact dd {
+  margin: 0;
+  font-weight: 700;
+}
+
+.qdoc__boxes {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  margin: 26px 0 22px;
+}
+.qdoc__boxes > div {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  text-align: center;
+}
+.qdoc__boxlabel {
+  font-weight: 700;
+  font-size: 14px;
+}
+.qdoc__box {
+  min-height: 24px;
+  padding: 2px 6px;
+  border: 1px solid var(--qdoc-line);
+  border-radius: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qdoc__lines {
+  width: 100%;
+  border-collapse: collapse;
+}
+.qdoc__lines th {
+  padding: 0 4px 8px;
+  text-align: left;
+  font-weight: 700;
+  text-decoration: underline;
+  white-space: nowrap;
+}
+.qdoc__lines th span {
+  margin-left: 4px;
+}
+.qdoc__lines td {
+  padding: 2px 4px;
+  vertical-align: top;
+}
+.qdoc__lines .num {
+  text-align: right;
+}
+
+.qdoc__bottom {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 32px;
+  margin-top: 10px;
+}
+.qdoc__sign {
+  display: grid;
+  grid-template-columns: auto minmax(150px, 280px);
+  gap: 14px 16px;
+  margin: 70px 0 0 12px;
+}
+.qdoc__sign dt {
+  white-space: nowrap;
+}
+.qdoc__sign dd {
+  margin: 0;
+  border-bottom: 1.5px dashed var(--qdoc-line);
+}
+.qdoc__totals {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  min-width: 320px;
+  gap: 2px 0;
+  margin: 0;
+}
+.qdoc__totals dt {
+  padding-right: 12px;
+}
+.qdoc__totals dd {
+  margin: 0;
+  text-align: right;
+}
+.qdoc__totals .strong {
+  font-weight: 700;
+}
+.qdoc__grand {
+  margin-top: 8px !important;
+  padding-top: 10px;
+  border-top: 1px solid var(--qdoc-line);
+  font-weight: 700;
+  font-size: 15px;
+}
+dd.qdoc__grand {
+  font-size: 19px;
+}
+
+.qdoc__foot {
+  margin-top: 46px;
+  padding-top: 8px;
+  border-top: 1px solid var(--qdoc-line);
+  font-size: 13px;
+}
+.qdoc__terms {
+  margin-top: 10px !important;
+  white-space: pre-line;
+  color: #333;
+}
+
+/* Printing: only the quotation, on a clean page */
+@media print {
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+  html:has(.qdoc),
+  body:has(.qdoc) {
+    background: #fff !important;
+  }
+  /* Everything around the quotation goes, so it prints on one clean page */
+  body:has(.qdoc) .order > :not(.qdoc-wrap),
+  body:has(.qdoc) .sheader,
+  body:has(.qdoc) .sfooter,
+  body:has(.qdoc) .checkout-bar,
+  .qdoc-wrap__head {
+    display: none !important;
+  }
+  body:has(.qdoc) * {
+    visibility: hidden;
+  }
+  body:has(.qdoc) .qdoc,
+  body:has(.qdoc) .qdoc * {
+    visibility: visible;
+  }
+  body:has(.qdoc) .qdoc {
+    position: absolute;
+    inset: 0 0 auto 0;
+    min-width: 0;
+    padding: 0;
+  }
+  .qdoc-scroll {
+    box-shadow: none;
+    overflow: visible;
+  }
+  .qdoc,
+  .qdoc * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

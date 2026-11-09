@@ -1,0 +1,28 @@
+# ---------- secrets: never commit ----------
+.env
+.env.*
+!.env.example
+# SageAPI keeps the Sage licence and the (protected) SQL password here, and the admin portal
+# writes to it. Copy appsettings.example.json to appsettings.json on a new machine.
+Backend/SageAPI/SageAPI/appsettings.json
+Backend/SageAPI/SageAPI/appsettings.*.json
+!Backend/SageAPI/SageAPI/appsettings.example.json
+
+# ---------- shop data: customer details and pictures, not code ----------
+# orders/ holds shoppers' names, phones and addresses
+Backend/StoreBackend/data/
+
+# ---------- dependencies and build output ----------
+node_modules/
+dist/
+bin/
+obj/
+*.tsbuildinfo
+
+# ---------- editor and OS files ----------
+.vs/
+*.user
+*.suo
+.DS_Store
+Thumbs.db
+*.log

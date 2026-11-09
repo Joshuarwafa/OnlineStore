@@ -1,0 +1,21 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>af012946-99f4-4e2d-b4a7-3f65feaa8f8c</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
+    <PackageReference Include="System.Data.SqlClient" Version="4.9.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="Pastel.Evolution">
+      <HintPath>..\..\..\..\..\sage evolution dll\Pastel.Evolution.11.0.0.33\Pastel.Evolution.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>

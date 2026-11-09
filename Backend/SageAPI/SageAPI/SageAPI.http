@@ -1,0 +1,83 @@
+@SageAPI_HostAddress = http://localhost:5071
+
+GET {{SageAPI_HostAddress}}/api/Pastel/Accounts
+Accept: application/json
+
+###
+
+POST {{SageAPI_HostAddress}}/api/Pastel/salesorder
+Content-Type: application/json
+
+{
+  "customer": "Customer1",
+  "lines": [
+    { "itemCode": "ItemA", "quantity": 5, "price": 10 }
+  ]
+}
+
+###
+
+POST {{SageAPI_HostAddress}}/api/Pastel/salesorder/invoice
+Content-Type: application/json
+
+{
+  "customer": "CustomerSDK1",
+  "invoiceDate": "2026-10-04",
+  "deliverTo": {
+    "line1": "Physical Address 1",
+    "line2": "Address 2",
+    "line3": "Address 3",
+    "line4": "Address 4",
+    "line5": "Address 5",
+    "postalCode": "PC"
+  },
+  "project": "P1",
+  "lines": [
+    { "itemCode": "ItemA", "quantity": 10 },
+    { "glAccount": "Accounting Fees", "quantity": 1, "price": 30 }
+  ]
+}
+
+###
+
+POST {{SageAPI_HostAddress}}/api/Pastel/salesorder/quotation
+Content-Type: application/json
+
+{
+  "customer": "Cust1",
+  "lines": [
+    { "itemCode": "ItemA", "quantity": 10, "price": 20 }
+  ]
+}
+
+###
+
+GET {{SageAPI_HostAddress}}/api/Pastel/WarehouseQTY
+Accept: application/json
+
+###
+
+GET {{SageAPI_HostAddress}}/api/Pastel/WarehouseQTY?warehouse=2
+Accept: application/json
+
+###
+
+GET {{SageAPI_HostAddress}}/api/Pastel/WarehouseQTY/ItemA
+Accept: application/json
+
+###
+
+GET {{SageAPI_HostAddress}}/api/Pastel/inventory/pricelist
+Accept: application/json
+
+###
+
+GET {{SageAPI_HostAddress}}/api/Pastel/inventory/pricelist?priceList=Price List 1
+Accept: application/json
+
+###
+
+GET {{SageAPI_HostAddress}}/api/Pastel/inventory/pricelist/ItemA
+Accept: application/json
+
+###
